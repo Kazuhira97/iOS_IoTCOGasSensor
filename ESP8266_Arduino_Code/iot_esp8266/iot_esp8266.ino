@@ -1,7 +1,9 @@
 #include <Wire.h>
+#include <ESP8266WiFi.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Fonts/Picopixel.h>
+#include <Firebase_ESP_Client.h>
 
 //--------------------CONSTANTS----------------------------------
 //-----------------Screen configuration (SSD1306)----------------
@@ -33,7 +35,21 @@
 #define     D0                        (16)
 #define     D1                        (5)
 #define     D2                        (4)
+//-----------------Firebase constants-----------------------------
+#define     API_KEY                   ""
+#define     DATABASE_URL              ""
+#define     USER_EMAIL                ""
+#define     USER_PASSWORD             ""
 
+
+//---------------------IOT VARIABLES-------------------------------
+const char* SSID_NAME = "";
+const char* SSID_PWD = "";
+
+//---------------------FIREBASE VARIABLES--------------------------
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
 
 //---------------------GLOBAL VARIABLES----------------------------
 float LPCurve[3] = {2.3, 0.21, -0.47};
@@ -73,6 +89,45 @@ const unsigned char kirbyImage [] PROGMEM = {
 	0xff, 0xff, 0xf9, 0xff, 0xff, 0xfc
 };
 
+/**
+  * Setup wifi
+  */
+void connectWifi() {
+  Serial.println("Connecting to SSID: " + *SSID_NAME);
+  WiFi.begin(SSID_NAME, SSID_PWD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(700);
+    Serial.print(".");
+  }
+
+  Serial.println("Device Connected");
+  Serial.println("");
+}
+
+/**
+  * Setup firebase realtime database
+  */
+void connectFirebase() {
+  Serial.println("Initializing Firebase...");
+
+  config.api_key = API_KEY;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+  config.database_url = DATABASE_URL;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  while(!Firebase.ready()) {
+    delay(700);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("Firebase connected successfully");
+}
+
 
 /**
   * NodeMCU setup function
@@ -85,6 +140,9 @@ void setup() {
 
   delay(6000);
   Serial.println("Starting...");
+
+  connectWifi();
+  connectFirebase();
 
   // Start screen
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS);
@@ -137,6 +195,10 @@ void loop() {
 
     sensorFrame(GAS_S, CO);
 
+    if(Firebase.ready()) {
+      Firebase.RTDB.setFloat(&fbdo, "/lecture/Gas", GAS_S);
+      Firebase.RTDB.setFloat(&fbdo, "/lecture/CO", CO);
+    }
   }  
 }
 
