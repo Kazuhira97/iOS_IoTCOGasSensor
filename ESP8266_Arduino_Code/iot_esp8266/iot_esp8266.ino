@@ -17,16 +17,18 @@
 #define     RL_VAL_MQ2                (5)
 #define     RO_CLEAN_AIR_FACT_MQ2     (9.83)
 #define     GAS_LP                    (0)
+#define     MQ2_CHANNEL               (0)
 //-----------------MQ9 Constants (CO2)---------------------------
 #define     MQ9_PIN                   (A0)
-#define     RL_VAL_MQ9                (1)
+#define     RL_VAL_MQ9                (10)
 #define     RO_CLEAN_AIR_FACT_MQ9     (9.799)
-#define     GAS_CO                    (1)   
+#define     GAS_CO                    (1) 
+#define     MQ9_CHANNEL               (1)  
 //-----------------Calibration constants-------------------------
 #define     CALIB_SAMPLE_TIMES        (50) //How many samples to take in calibration phase
 #define     CALIB_SAMPLE_INTERVAL     (500) //time interval between each sample (ms)
-#define     READ_SAMPLE_TIMES         (30) //How many samples to take in normal operation
-#define     READ_SAMPLE_INTERVAL      (50) //Time interval between each normal sample (ms)
+#define     READ_SAMPLE_TIMES         (5) //How many samples to take in normal operation
+#define     READ_SAMPLE_INTERVAL      (20) //Time interval between each normal sample (ms)
 //-----------------NodeMCU Pin constants--------------------------
 #define     D0                        (16)
 #define     D1                        (5)
@@ -38,8 +40,8 @@ float LPCurve[3] = {2.3, 0.21, -0.47};
 float COCurve[3] = {2.3, 0.72, -0.34};
 float Ro_mq2 = 10;
 float Ro_mq9 = 20;
-float GAS_S = 0; //Storing variable for MQ2
-float CO = 0; //Storing variable for MQ9
+long GAS_S = 0; //Storing variable for MQ2
+long CO = 0; //Storing variable for MQ9
 bool available = false; //Verify if sensors are calibrated ok
 
 // Display object
@@ -94,19 +96,14 @@ void setup() {
   pinMode(D1, OUTPUT);
   pinMode(D2, OUTPUT);
 
-  digitalWrite(D0, LOW);
-  digitalWrite(D1, LOW);
-  digitalWrite(D2, LOW);
-  delay(200);
-  Ro_mq2 = MQ2Calibration(MQ2_PIN);
+  selectChannel(MQ2_CHANNEL);
+  Ro_mq2 = MQCalibration(MQ2_PIN, RO_CLEAN_AIR_FACT_MQ2, RL_VAL_MQ2);
   delay(500);
 
-  digitalWrite(D0, HIGH);
-  digitalWrite(D1, LOW);
-  digitalWrite(D2, LOW);
-  delay(200);
-  Ro_mq9 = MQ2Calibration(MQ9_PIN);
+  selectChannel(MQ9_CHANNEL);
+  Ro_mq9 = MQCalibration(MQ9_PIN, RO_CLEAN_AIR_FACT_MQ9, RL_VAL_MQ9);
   delay(500);
+
 
   Serial.println("Calibration finished");
   Serial.println("Ro MQ2:");
@@ -114,11 +111,10 @@ void setup() {
   Serial.println("Ro MQ9:");
   Serial.println(Ro_mq9);
 
-  if((!isinf(Ro_mq2)) && (!isinf(Ro_mq9))) {
-    //sensorFrame();
+  if (isValidRo(Ro_mq2) && isValidRo(Ro_mq9)) {
     available = true;
   } else {
-    available = false;
+    //Print error screen
   }
 
 }
@@ -127,140 +123,166 @@ void setup() {
   * Loop method.
   */
 void loop() {
-  if (available) {
-    sensorFrame();
-    Serial.println("Reading process");
 
-    //reading MQ2
+  if (available) {
+    GAS_S = 0; CO = 0;
+
+    selectChannel(MQ2_CHANNEL);
+    Serial.println("MQ2");
+    GAS_S = readMQData(MQ2_PIN, RL_VAL_MQ2, Ro_mq2, LPCurve);
+
+    selectChannel(MQ9_CHANNEL);
+    Serial.println("MQ9");
+    CO = readMQData(MQ9_PIN, RL_VAL_MQ9, Ro_mq9, COCurve);
+
+    sensorFrame(GAS_S, CO);
+
+  }  
+}
+
+/**
+  * Select the mux channel
+  */
+void selectChannel(int channel) {
+  if (channel == MQ2_CHANNEL) {
     digitalWrite(D0, LOW);
     digitalWrite(D1, LOW);
     digitalWrite(D2, LOW);
-    delay(200);
-    GAS_S = MQGetGasPercentage(readMQ2(MQ2_PIN)/Ro_mq2, GAS_LP);
-
-    //reading MQ9
+  } else if (channel == MQ9_CHANNEL) {
     digitalWrite(D0, HIGH);
     digitalWrite(D1, LOW);
     digitalWrite(D2, LOW);
-    delay(200);
-    CO = MQGetGasPercentage(readMQ9(MQ9_PIN)/Ro_mq9, GAS_CO);
-
-    Serial.print("GAS_LP: "); Serial.println(GAS_S);
-    Serial.print("CO: "); Serial.println(CO);
-  } else {
-    Serial.println("ERROR");
   }
-  
+  delay(200); //Secure time to change channel
 }
 
 /**
-  * Calculating MQ sensors percentage
+  * This function validate the ro value
   */
-int MQGetPercetage(float rs_ro_ratio, float *lpCurve) {
-  return (pow(10, (((log(rs_ro_ratio) - lpCurve[1]) / lpCurve[2]) + lpCurve[0])));
+bool isValidRo(float ro) {
+  if((isnan(ro)) || (ro <= 0.01) || (ro >= 10000.0)) {
+    return false;
+  } 
+
+  return true;
 }
 
 /**
-  * Calculating the MQ sensors gas percentage
+  * Calibrating the MQ sensor
   */
-int MQGetGasPercentage(float rs_ro_ratio, int gas_id) {
-  if(gas_id == GAS_LP) {
-    return MQGetPercetage(rs_ro_ratio, LPCurve);
-  } else if (gas_id == GAS_CO) {
-    return MQGetPercetage(rs_ro_ratio, COCurve);
-  } else {
-    return 0;
-  }
-}
-
-/**
-  * Calculating MQ9 Gas percentage (Only monoxide)
-  */
-//int MG9GasPercentage(float rs_ro_ratio) {
-//  return (pow(10, ((-2.199 * (log10(rs_ro_ratio))) + 2.766)));
-//}
-
-/**
-  * Calculating the MQ2 Resistance
-  */
-float MQ2ResistanceCalc(int raw_adc) {
-  return (((float)RL_VAL_MQ2 * (1023 - raw_adc) / raw_adc));
-}
-
-/**
-  * Calculating the MQ9 Resistance
-  */
-float MQ9ResistanceCalc(int raw_adc) {
-  return (((float)RL_VAL_MQ9 * (1023 - raw_adc) / raw_adc));
-}
-
-/**
-  * Calibrating the MQ2 sensor
-  */
-float MQ2Calibration(int mq_pin) {
-  int i;
+float MQCalibration(int mq_pin, float RO_CLEAN_AIR_FACT, float RL_VAL) {
   float val = 0;
 
-  for (i = 0; i < CALIB_SAMPLE_TIMES; i++) {
-    val += MQ2ResistanceCalc(analogRead(mq_pin));
+  for (int i = 0; i < CALIB_SAMPLE_TIMES; ++i) {
+    int raw = analogReadAverage(5, 20, mq_pin);
+    float rs = MQResistanceCalc(raw, RL_VAL);
+    val += rs;
     delay(CALIB_SAMPLE_INTERVAL);
   }
 
-  val = val / CALIB_SAMPLE_TIMES;
-  val = val / RO_CLEAN_AIR_FACT_MQ2;
+  float rs_avg = val / (float)CALIB_SAMPLE_TIMES;
+  float ro = rs_avg / RO_CLEAN_AIR_FACT;
+
+  Serial.print("Calibracion completa. Ro = ");
+  Serial.println(ro);
   
-  return val;
+  return ro;
 }
 
 /**
-  * Calibrating the MQ9 sensor
+  * Average of raw input
   */
-float MQ9Calibration(int mq_pin) {
-  int i;
-  float rs_air_val = 0;
-  float r0;
+int analogReadAverage(int samples, int interval, int adc_raw) {
+  long avSum = 0;
 
-  for(i = 0; i < CALIB_SAMPLE_TIMES; i++) {
-    rs_air_val += MQ9ResistanceCalc(analogRead(mq_pin));
-    delay(CALIB_SAMPLE_INTERVAL);
+  //Serial.println("INSIDE ANALOG READ AVERAGE");
+
+  for (int i = 0; i < samples; i++) {
+    int lect = analogRead(adc_raw);
+    avSum = avSum + (long)lect;
+    //Serial.print("Input: ");
+    //Serial.print(lect);
+    //Serial.print(" - Sum: ");
+    //Serial.println(avSum);
+    delay(interval);
   }
 
-  rs_air_val = rs_air_val / CALIB_SAMPLE_TIMES;
-  r0 = rs_air_val / RO_CLEAN_AIR_FACT_MQ9;
-
-  return r0;
+  int avRaw = (int)(((int)avSum) / samples);
+  //Serial.print("Result: ");
+  //Serial.println(avRaw);
+  return avRaw;
 }
 
 /**
-  * Read the MQ2 input data
+  * Calculating the MQ Resistance
   */
-float readMQ2(int mq_pin) {
-  int i;
-  float rs = 0;
+float MQResistanceCalc(int raw_adc, float RL_MQ) {
+  //return (((float)RL_VAL_MQ2 * (1023 - raw_adc) / raw_adc));
+  if (raw_adc <= 0) {
+    return 99999.0;
+  } 
 
-  for (i = 0; i < READ_SAMPLE_TIMES; i++) {
-    rs += MQ2ResistanceCalc(analogRead(mq_pin));
-    delay(READ_SAMPLE_INTERVAL);
-  }
+  float sensorVolt = rawToSensorVolt(raw_adc);
 
-  rs = rs / READ_SAMPLE_TIMES;
+  if (sensorVolt <= 0.00001) {
+    return 99999.0;
+  } 
+
+  float rs = (RL_MQ * (5.0 - sensorVolt)) / sensorVolt;
   return rs;
 }
 
 /**
-  * Read the MQ9 input data
+  * Calculate the sensor voltaje from raw input
   */
-float readMQ9(int mq_pin) {
-  int i;
-  float rs = 0;
+float rawToSensorVolt(int raw_adc) {
+  float adcVolt = ((float)raw_adc / 1023.0) * 3.3;
+  float sensorVolt = adcVolt / (330.0 / (330.0 + 180.0));
+  return sensorVolt;
+}
 
-  for(i = 0; i < READ_SAMPLE_TIMES; i++) {
-    rs += MQ9ResistanceCalc(analogRead(mq_pin));
-    delay(READ_SAMPLE_INTERVAL);
+/**
+  * Convert the Rs/Ro ratio to ppm
+  */
+long MQGetGasPercentage(float rs_ro_ratio, float *pcurve) {
+  if (rs_ro_ratio <= 0.000001) {
+    return 0;
   }
 
-  rs = rs / READ_SAMPLE_TIMES;
-  return rs;
+  float log_rsro = log10(rs_ro_ratio);
+  float exponent = ((log_rsro - pcurve[1]) / pcurve[2]) + pcurve[0];
+  float result = pow(10, exponent);
+
+  if(isinf(result)) {
+    return 0;
+  }
+
+  return (long)result;
+}
+
+/**
+  * Read the MQ Data
+  */
+long readMQData(int mq_pin, float RL_MQ, float ro_mq, float *curve) {
+  int rawAvg = analogReadAverage(READ_SAMPLE_TIMES, READ_SAMPLE_INTERVAL, mq_pin);
+  float sensorVolt = rawToSensorVolt(rawAvg);
+  float rs = MQResistanceCalc(rawAvg, RL_MQ);
+  float rs_ro_ratio = rs / ro_mq;
+  long ppm = MQGetGasPercentage(rs_ro_ratio, curve);
+
+  Serial.print("Sensor data: ");
+  Serial.print(" | ADC avg: ");
+  Serial.print(rawAvg);
+  Serial.print(" | sensorVolt: ");
+  Serial.print(sensorVolt);
+  Serial.print(" V | Rs: ");
+  Serial.print(rs);
+  Serial.print(" kΩ | Rs/Ro: ");
+  Serial.print(rs_ro_ratio);
+  Serial.print(" | ppm(aprox): ");
+  Serial.println(ppm);
+
+  return ppm;
 }
 
 /**
@@ -316,9 +338,9 @@ void startingFrames() {
 /**
   * It shows the sensor frame (Measurements)
   */
-void sensorFrame() {
-  int GAS_LP_dummy = 1234; // Dummy data
-  int CO_2_dummy = 1234;
+void sensorFrame(long GAS_D, int CO_D) {
+  //int GAS_LP_dummy = 1234; // Dummy data
+  //int CO_2_dummy = 1234;
   display.clearDisplay();
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
@@ -338,9 +360,23 @@ void sensorFrame() {
 
   //Measurements data
   display.setCursor(20, 60);
-  display.println(String(GAS_LP_dummy));
-  display.setCursor(81, 60);
-  display.println(String(CO_2_dummy));
 
+  if (GAS_D < 200.0) {
+    display.println("LOW");
+  } else if ((GAS_D >= 200.0) && (GAS_D < 10000.0)) {
+    display.println(String(GAS_D));
+  } else if (GAS_D >= 10000.0){
+    display.println("HIGH");
+  }
+
+  display.setCursor(81, 60);
+
+  if (CO_D < 200.0) {
+    display.println("LOW");
+  } else if ((CO_D >= 200.0) && (CO_D < 10000.0)) {
+    display.println(String(CO_D));
+  } else if (CO_D >= 10000.0){
+    display.println("HIGH");
+  }
   display.display();
 }
